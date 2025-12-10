@@ -1,7 +1,7 @@
 package com.krkarma777.springaimapper.factory;
 
 import com.krkarma777.springaimapper.proxy.LlmClientInvocationHandler;
-import org.springframework.ai.chat.ChatClient;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.FactoryBean;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -15,8 +15,9 @@ public class LlmClientFactoryBean<T> implements FactoryBean<T> {
 
     private final Class<T> interfaceType;
     
+    // [핵심 변경] ChatClient 대신 Builder를 주입받음 (Spring AI 1.x 표준)
     @Autowired
-    private ChatClient chatClient;
+    private ChatClient.Builder chatClientBuilder;
 
     public LlmClientFactoryBean(Class<T> interfaceType) {
         this.interfaceType = interfaceType;
@@ -25,6 +26,9 @@ public class LlmClientFactoryBean<T> implements FactoryBean<T> {
     @Override
     @SuppressWarnings("unchecked")
     public T getObject() {
+        // Builder를 사용해 이 인터페이스 전용 클라이언트 생성
+        ChatClient chatClient = chatClientBuilder.build();
+        
         return (T) Proxy.newProxyInstance(
             interfaceType.getClassLoader(),
             new Class<?>[]{interfaceType},

@@ -1,14 +1,13 @@
 package com.krkarma777.springaimapper.proxy;
 
 import com.krkarma777.springaimapper.annotation.Param;
-import org.springframework.ai.chat.ChatClient;
-import org.springframework.ai.chat.ChatResponse;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.chat.prompt.PromptTemplate;
-import org.springframework.ai.output.BeanOutputConverter;
+import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.util.StringUtils;
 
 import java.lang.reflect.InvocationHandler;
@@ -37,33 +36,43 @@ public class LlmClientInvocationHandler implements InvocationHandler {
 
     @Override
     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-        // Object 메서드는 직접 처리
+        // Object 메서드(toString 등) 처리
         if (method.getDeclaringClass() == Object.class) {
             return method.invoke(this, args);
         }
 
-        // @UserMessage 어노테이션 확인
+        // 1. 어노테이션 체크
         com.krkarma777.springaimapper.annotation.UserMessage userMessageAnnotation = 
             method.getAnnotation(com.krkarma777.springaimapper.annotation.UserMessage.class);
+        
         if (userMessageAnnotation == null) {
-            throw new IllegalStateException(
-                "Method " + method.getName() + " must be annotated with @UserMessage");
+            return null; 
         }
 
-        // 프롬프트 템플릿 추출
+        // 2. 파라미터 및 리턴 타입 준비
         String promptTemplate = userMessageAnnotation.value();
-        
-        // 파라미터 이름 매핑 생성
         Map<String, Object> variables = buildParameterMap(method, args);
+        Class<?> returnType = method.getReturnType();
+        BeanOutputConverter<?> converter = null;
+        String formatInstruction = "";
         
-        // 프롬프트 생성
-        Prompt prompt = createPrompt(promptTemplate, variables);
+        // 3. 객체 변환이 필요한 경우 변환기 준비
+        if (!isSimpleType(returnType)) {
+            converter = new BeanOutputConverter<>(returnType);
+            formatInstruction = converter.getFormat();
+        }
+
+        // 4. 프롬프트 생성
+        Prompt prompt = createPrompt(promptTemplate, variables, formatInstruction);
         
-        // LLM 호출
-        ChatResponse response = chatClient.call(prompt);
-        
-        // 응답 변환
-        return convertResponse(response, method.getReturnType());
+        // [핵심 변경] Fluent API 사용 (Spring AI 1.x 표준)
+        // chatClient.prompt(prompt) -> .call() -> .content()
+        String responseContent = chatClient.prompt(prompt)
+                .call()
+                .content();
+
+        // 5. 결과 변환
+        return convertResponse(responseContent, returnType, converter);
     }
 
     /**
@@ -74,10 +83,12 @@ public class LlmClientInvocationHandler implements InvocationHandler {
         Map<String, Object> variables = new HashMap<>();
         Parameter[] parameters = method.getParameters();
         
-        for (int i = 0; i < parameters.length; i++) {
-            Parameter parameter = parameters[i];
-            String paramName = getParameterName(parameter, i);
-            variables.put(paramName, args[i]);
+        if (args != null) {
+            for (int i = 0; i < parameters.length; i++) {
+                Parameter parameter = parameters[i];
+                String paramName = getParameterName(parameter, i);
+                variables.put(paramName, args[i]);
+            }
         }
         
         return variables;
@@ -90,19 +101,16 @@ public class LlmClientInvocationHandler implements InvocationHandler {
      * 3. 인덱스 기반 fallback
      */
     private String getParameterName(Parameter parameter, int index) {
-        // @Param 어노테이션 확인
         Param paramAnnotation = parameter.getAnnotation(Param.class);
         if (paramAnnotation != null && StringUtils.hasText(paramAnnotation.value())) {
             return paramAnnotation.value();
         }
         
-        // 리플렉션으로 파라미터명 추출 시도
         String name = parameter.getName();
-        if (name != null && !name.equals("arg" + index)) {
+        if (name != null && !name.startsWith("arg")) {
             return name;
         }
         
-        // Fallback: 인덱스 기반
         return String.valueOf(index);
     }
 
@@ -110,17 +118,21 @@ public class LlmClientInvocationHandler implements InvocationHandler {
      * 프롬프트를 생성합니다.
      * 시스템 메시지와 사용자 메시지를 포함합니다.
      */
-    private Prompt createPrompt(String promptTemplate, Map<String, Object> variables) {
+    private Prompt createPrompt(String promptTemplate, Map<String, Object> variables, String formatInstruction) {
         List<Message> messages = new ArrayList<>();
         
-        // 시스템 메시지 추가 (있는 경우)
         if (StringUtils.hasText(systemMessage)) {
             messages.add(new SystemMessage(systemMessage));
         }
         
-        // 사용자 메시지 생성 (플레이스홀더 치환)
         PromptTemplate template = new PromptTemplate(promptTemplate);
         String userMessageText = template.render(variables);
+        
+        // 포맷 지시문이 있으면 사용자 메시지 뒤에 붙임
+        if (StringUtils.hasText(formatInstruction)) {
+            userMessageText += "\n\n" + formatInstruction;
+        }
+        
         messages.add(new UserMessage(userMessageText));
         
         return new Prompt(messages);
@@ -132,31 +144,32 @@ public class LlmClientInvocationHandler implements InvocationHandler {
     private String extractSystemMessage() {
         com.krkarma777.springaimapper.annotation.SystemMessage systemMessageAnnotation = 
             interfaceType.getAnnotation(com.krkarma777.springaimapper.annotation.SystemMessage.class);
-        if (systemMessageAnnotation != null) {
-            return systemMessageAnnotation.value();
-        }
-        return null;
+        return systemMessageAnnotation != null ? systemMessageAnnotation.value() : null;
     }
 
     /**
      * LLM 응답을 메서드의 반환 타입으로 변환합니다.
      */
-    private Object convertResponse(ChatResponse response, Class<?> returnType) {
-        String responseText = response.getResult().getOutput().getContent();
-        
-        // void 반환 타입
+    private Object convertResponse(String responseText, Class<?> returnType, BeanOutputConverter<?> converter) {
         if (returnType == void.class || returnType == Void.class) {
             return null;
         }
         
-        // String 반환 타입
         if (returnType == String.class) {
             return responseText;
         }
         
-        // 기타 타입: BeanOutputConverter 사용
-        BeanOutputConverter<?> converter = new BeanOutputConverter<>(returnType);
+        // 변환기 사용
         return converter.convert(responseText);
+    }
+
+    /**
+     * 단순 타입인지 확인합니다.
+     * String, void, primitive, Number 타입을 단순 타입으로 간주합니다.
+     */
+    private boolean isSimpleType(Class<?> type) {
+        return type == String.class || type == void.class || type == Void.class || 
+               type.isPrimitive() || Number.class.isAssignableFrom(type);
     }
 }
 
