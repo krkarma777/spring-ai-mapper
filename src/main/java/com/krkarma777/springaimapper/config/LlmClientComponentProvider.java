@@ -33,7 +33,8 @@ public class LlmClientComponentProvider extends ClassPathScanningCandidateCompon
     protected boolean isCandidateComponent(AnnotatedBeanDefinition beanDefinition) {
         AnnotationMetadata metadata = beanDefinition.getMetadata();
         // 인터페이스이면서 @LlmClient 어노테이션이 있는 경우 허용
-        return metadata.isInterface() && metadata.hasAnnotation(LlmClient.class.getName());
+        // isIndependent() 체크로 중첩된 private interface 등을 걸러냅니다
+        return metadata.isInterface() && metadata.isIndependent() && metadata.hasAnnotation(LlmClient.class.getName());
     }
 }
 
