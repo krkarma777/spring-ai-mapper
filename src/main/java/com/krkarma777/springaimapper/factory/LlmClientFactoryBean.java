@@ -1,5 +1,6 @@
 package com.krkarma777.springaimapper.factory;
 
+import com.krkarma777.springaimapper.annotation.LlmClient;
 import com.krkarma777.springaimapper.proxy.LlmClientInvocationHandler;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.FactoryBean;
@@ -39,12 +40,16 @@ public class LlmClientFactoryBean<T> implements FactoryBean<T> {
     @Override
     @SuppressWarnings("unchecked")
     public T getObject() {
+        // Extract model name from @LlmClient annotation
+        LlmClient annotation = interfaceType.getAnnotation(LlmClient.class);
+        String modelName = (annotation != null) ? annotation.model() : "";
+        
         ChatClient chatClient = chatClientBuilder.build();
         
         return (T) Proxy.newProxyInstance(
             interfaceType.getClassLoader(),
             new Class<?>[]{interfaceType},
-            new LlmClientInvocationHandler(chatClient, interfaceType)
+            new LlmClientInvocationHandler(chatClient, interfaceType, modelName)
         );
     }
 

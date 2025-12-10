@@ -10,6 +10,7 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.converter.BeanOutputConverter;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.util.StringUtils;
 
 import java.lang.reflect.InvocationHandler;
@@ -34,17 +35,20 @@ public class LlmClientInvocationHandler implements InvocationHandler {
     private final ChatClient chatClient;
     private final Class<?> interfaceType;
     private final String systemMessage;
+    private final String modelName;
 
     /**
      * Creates a new invocation handler.
      *
      * @param chatClient the ChatClient instance to use for LLM calls
      * @param interfaceType the interface type being proxied
+     * @param modelName the model name to use (if specified in @LlmClient annotation)
      */
-    public LlmClientInvocationHandler(ChatClient chatClient, Class<?> interfaceType) {
+    public LlmClientInvocationHandler(ChatClient chatClient, Class<?> interfaceType, String modelName) {
         this.chatClient = chatClient;
         this.interfaceType = interfaceType;
         this.systemMessage = extractSystemMessage();
+        this.modelName = modelName;
     }
 
     /**
@@ -86,9 +90,16 @@ public class LlmClientInvocationHandler implements InvocationHandler {
         Prompt prompt = createPrompt(promptTemplate, variables, formatInstruction);
 
         // Execute LLM call using Fluent API
-        String responseContent = chatClient.prompt(prompt)
-                .call()
-                .content();
+        ChatClient.ChatClientRequestSpec requestSpec = chatClient.prompt(prompt);
+        
+        // Apply model-specific options if model name is specified
+        if (StringUtils.hasText(this.modelName)) {
+            requestSpec.options(OpenAiChatOptions.builder()
+                    .model(this.modelName)
+                    .build());
+        }
+
+        String responseContent = requestSpec.call().content();
 
         return convertResponse(responseContent, returnType, converter);
     }
