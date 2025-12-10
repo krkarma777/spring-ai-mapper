@@ -9,32 +9,36 @@ import org.springframework.core.type.filter.AnnotationTypeFilter;
 import com.krkarma777.springaimapper.annotation.LlmClient;
 
 /**
- * @LlmClient 어노테이션이 붙은 인터페이스를 스캔하기 위한 ComponentProvider.
- * 기본 ClassPathScanningCandidateComponentProvider는 인터페이스를 제외하므로,
- * isCandidateComponent를 오버라이드하여 인터페이스도 감지하도록 구현합니다.
+ * Custom component provider to scan for interfaces annotated with {@link LlmClient}.
+ * <p>
+ * By default, Spring's ClassPathScanningCandidateComponentProvider does not detect interfaces.
+ * This class overrides {@link #isCandidateComponent(AnnotatedBeanDefinition)} to allow them.
+ * </p>
  */
 public class LlmClientComponentProvider extends ClassPathScanningCandidateComponentProvider {
 
-    public LlmClientComponentProvider() {
-        super(false);
-        addIncludeFilter(new AnnotationTypeFilter(LlmClient.class));
-    }
-
+    /**
+     * Creates a new provider with the given environment.
+     *
+     * @param environment the Spring environment
+     */
     public LlmClientComponentProvider(Environment environment) {
         super(false, environment);
         addIncludeFilter(new AnnotationTypeFilter(LlmClient.class));
     }
 
     /**
-     * 인터페이스도 후보 컴포넌트로 인식하도록 오버라이드합니다.
-     * 기본 구현은 인터페이스를 제외하지만, @LlmClient가 붙은 인터페이스는 허용합니다.
+     * Determines whether the given bean definition qualifies as a candidate component.
+     * <p>
+     * Overridden to allow interfaces annotated with {@code @LlmClient}.
+     * </p>
+     *
+     * @param beanDefinition the bean definition to check
+     * @return true if the bean definition is an interface and has the required annotation
      */
     @Override
     protected boolean isCandidateComponent(AnnotatedBeanDefinition beanDefinition) {
         AnnotationMetadata metadata = beanDefinition.getMetadata();
-        // 인터페이스이면서 @LlmClient 어노테이션이 있는 경우 허용
-        // isIndependent() 체크로 중첩된 private interface 등을 걸러냅니다
-        return metadata.isInterface() && metadata.isIndependent() && metadata.hasAnnotation(LlmClient.class.getName());
+        return metadata.isInterface() && metadata.hasAnnotation(LlmClient.class.getName());
     }
 }
-

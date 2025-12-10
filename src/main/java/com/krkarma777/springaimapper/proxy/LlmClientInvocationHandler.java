@@ -1,6 +1,8 @@
 package com.krkarma777.springaimapper.proxy;
 
 import com.krkarma777.springaimapper.annotation.Param;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -19,65 +21,87 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * LLM 클라이언트 인터페이스의 메서드 호출을 인터셉트하여
- * 실제 LLM 호출로 변환하는 InvocationHandler입니다.
+ * Handles method invocations for {@link com.krkarma777.springaimapper.annotation.LlmClient} interfaces.
+ * <p>
+ * This handler intercepts the method call, constructs a prompt using the template,
+ * sends it to the LLM via {@link ChatClient}, and converts the response into the return type.
+ * </p>
  */
 public class LlmClientInvocationHandler implements InvocationHandler {
 
+    private static final Logger logger = LoggerFactory.getLogger(LlmClientInvocationHandler.class);
+    
     private final ChatClient chatClient;
     private final Class<?> interfaceType;
     private final String systemMessage;
 
+    /**
+     * Creates a new invocation handler.
+     *
+     * @param chatClient the ChatClient instance to use for LLM calls
+     * @param interfaceType the interface type being proxied
+     */
     public LlmClientInvocationHandler(ChatClient chatClient, Class<?> interfaceType) {
         this.chatClient = chatClient;
         this.interfaceType = interfaceType;
         this.systemMessage = extractSystemMessage();
     }
 
+    /**
+     * Intercepts the method call and executes the LLM request.
+     *
+     * @param proxy the proxy instance
+     * @param method the method being invoked
+     * @param args the method arguments
+     * @return the LLM response converted to the method's return type
+     * @throws Throwable if an error occurs during invocation
+     */
     @Override
     public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-        // Object 메서드(toString 등) 처리
         if (method.getDeclaringClass() == Object.class) {
             return method.invoke(this, args);
         }
 
-        // 1. 어노테이션 체크
         com.krkarma777.springaimapper.annotation.UserMessage userMessageAnnotation = 
             method.getAnnotation(com.krkarma777.springaimapper.annotation.UserMessage.class);
         
         if (userMessageAnnotation == null) {
+            logger.warn("Method {} is missing @UserMessage annotation.", method.getName());
             return null; 
         }
 
-        // 2. 파라미터 및 리턴 타입 준비
         String promptTemplate = userMessageAnnotation.value();
         Map<String, Object> variables = buildParameterMap(method, args);
         Class<?> returnType = method.getReturnType();
+
         BeanOutputConverter<?> converter = null;
         String formatInstruction = "";
         
-        // 3. 객체 변환이 필요한 경우 변환기 준비
+        // Prepare BeanOutputConverter if return type is a complex object
         if (!isSimpleType(returnType)) {
             converter = new BeanOutputConverter<>(returnType);
             formatInstruction = converter.getFormat();
         }
 
-        // 4. 프롬프트 생성
         Prompt prompt = createPrompt(promptTemplate, variables, formatInstruction);
-        
-        // [핵심 변경] Fluent API 사용 (Spring AI 1.x 표준)
-        // chatClient.prompt(prompt) -> .call() -> .content()
+
+        // Execute LLM call using Fluent API
         String responseContent = chatClient.prompt(prompt)
                 .call()
                 .content();
 
-        // 5. 결과 변환
         return convertResponse(responseContent, returnType, converter);
     }
 
     /**
-     * 메서드 파라미터를 이름-값 맵으로 변환합니다.
-     * @Param 어노테이션을 우선적으로 사용하고, 없으면 리플렉션으로 파라미터명을 추출합니다.
+     * Builds a parameter map from method parameters and arguments.
+     * <p>
+     * Uses {@link Param} annotation if present, otherwise falls back to reflection-based name extraction.
+     * </p>
+     *
+     * @param method the method
+     * @param args the method arguments
+     * @return a map of parameter names to values
      */
     private Map<String, Object> buildParameterMap(Method method, Object[] args) {
         Map<String, Object> variables = new HashMap<>();
@@ -90,56 +114,69 @@ public class LlmClientInvocationHandler implements InvocationHandler {
                 variables.put(paramName, args[i]);
             }
         }
-        
         return variables;
     }
 
     /**
-     * 파라미터 이름을 추출합니다.
-     * 1. @Param 어노테이션 우선
-     * 2. Parameter.getName() (컴파일 시 -parameters 옵션 필요)
-     * 3. 인덱스 기반 fallback
+     * Extracts the parameter name from a parameter.
+     * <p>
+     * Priority order:
+     * <ol>
+     *   <li>{@link Param} annotation value</li>
+     *   <li>Reflection-based parameter name (requires {@code -parameters} compiler flag)</li>
+     *   <li>Index-based fallback</li>
+     * </ol>
+     * </p>
+     *
+     * @param parameter the parameter
+     * @param index the parameter index
+     * @return the parameter name
      */
     private String getParameterName(Parameter parameter, int index) {
         Param paramAnnotation = parameter.getAnnotation(Param.class);
         if (paramAnnotation != null && StringUtils.hasText(paramAnnotation.value())) {
             return paramAnnotation.value();
         }
-        
         String name = parameter.getName();
         if (name != null && !name.startsWith("arg")) {
             return name;
         }
-        
         return String.valueOf(index);
     }
 
     /**
-     * 프롬프트를 생성합니다.
-     * 시스템 메시지와 사용자 메시지를 포함합니다.
+     * Creates a prompt from the template and variables.
+     * <p>
+     * Includes system message if present, and appends format instructions for complex return types.
+     * </p>
+     *
+     * @param promptTemplate the prompt template string
+     * @param variables the variables to substitute
+     * @param formatInstruction the format instruction for output conversion
+     * @return the constructed prompt
      */
     private Prompt createPrompt(String promptTemplate, Map<String, Object> variables, String formatInstruction) {
         List<Message> messages = new ArrayList<>();
-        
+
         if (StringUtils.hasText(systemMessage)) {
             messages.add(new SystemMessage(systemMessage));
         }
-        
+
         PromptTemplate template = new PromptTemplate(promptTemplate);
         String userMessageText = template.render(variables);
-        
-        // 포맷 지시문이 있으면 사용자 메시지 뒤에 붙임
+
         if (StringUtils.hasText(formatInstruction)) {
             userMessageText += "\n\n" + formatInstruction;
         }
-        
+
         messages.add(new UserMessage(userMessageText));
-        
         return new Prompt(messages);
     }
 
     /**
-     * 인터페이스 레벨의 @SystemMessage 어노테이션에서 시스템 메시지를 추출합니다.
+     * Extracts the system message from the interface-level {@link com.krkarma777.springaimapper.annotation.SystemMessage} annotation.
+     *
+     * @return the system message, or null if not present
      */
     private String extractSystemMessage() {
         com.krkarma777.springaimapper.annotation.SystemMessage systemMessageAnnotation = 
@@ -148,28 +185,34 @@ public class LlmClientInvocationHandler implements InvocationHandler {
     }
 
     /**
-     * LLM 응답을 메서드의 반환 타입으로 변환합니다.
+     * Converts the LLM response text to the method's return type.
+     *
+     * @param responseText the raw response text from the LLM
+     * @param returnType the expected return type
+     * @param converter the converter to use for complex types
+     * @return the converted response object
      */
     private Object convertResponse(String responseText, Class<?> returnType, BeanOutputConverter<?> converter) {
         if (returnType == void.class || returnType == Void.class) {
             return null;
         }
-        
         if (returnType == String.class) {
             return responseText;
         }
-        
-        // 변환기 사용
         return converter.convert(responseText);
     }
 
     /**
-     * 단순 타입인지 확인합니다.
-     * String, void, primitive, Number 타입을 단순 타입으로 간주합니다.
+     * Checks if a type is a simple type that doesn't require conversion.
+     * <p>
+     * Simple types include: String, void, primitives, and Number subclasses.
+     * </p>
+     *
+     * @param type the type to check
+     * @return true if the type is simple
      */
     private boolean isSimpleType(Class<?> type) {
         return type == String.class || type == void.class || type == Void.class || 
                type.isPrimitive() || Number.class.isAssignableFrom(type);
     }
 }
-

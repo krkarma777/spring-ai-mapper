@@ -8,25 +8,37 @@ import org.springframework.beans.factory.annotation.Autowired;
 import java.lang.reflect.Proxy;
 
 /**
- * @LlmClient 어노테이션이 붙은 인터페이스에 대한 프록시를 생성하는 FactoryBean입니다.
- * Java Dynamic Proxy를 사용하여 인터페이스의 구현체를 동적으로 생성합니다.
+ * A {@link FactoryBean} that creates a dynamic proxy for an {@link com.krkarma777.springaimapper.annotation.LlmClient} interface.
+ * <p>
+ * It injects a {@link ChatClient.Builder} to create a dedicated ChatClient instance for the proxy.
+ * </p>
+ *
+ * @param <T> the interface type
  */
 public class LlmClientFactoryBean<T> implements FactoryBean<T> {
 
     private final Class<T> interfaceType;
     
-    // [핵심 변경] ChatClient 대신 Builder를 주입받음 (Spring AI 1.x 표준)
     @Autowired
     private ChatClient.Builder chatClientBuilder;
 
+    /**
+     * Creates a new factory bean for the given interface type.
+     *
+     * @param interfaceType the interface class to create a proxy for
+     */
     public LlmClientFactoryBean(Class<T> interfaceType) {
         this.interfaceType = interfaceType;
     }
 
+    /**
+     * Creates and returns the proxy instance.
+     *
+     * @return the proxy instance implementing the interface
+     */
     @Override
     @SuppressWarnings("unchecked")
     public T getObject() {
-        // Builder를 사용해 이 인터페이스 전용 클라이언트 생성
         ChatClient chatClient = chatClientBuilder.build();
         
         return (T) Proxy.newProxyInstance(
@@ -36,14 +48,23 @@ public class LlmClientFactoryBean<T> implements FactoryBean<T> {
         );
     }
 
+    /**
+     * Returns the interface type.
+     *
+     * @return the interface class
+     */
     @Override
     public Class<?> getObjectType() {
         return interfaceType;
     }
 
+    /**
+     * Returns true, indicating this factory creates singleton beans.
+     *
+     * @return true
+     */
     @Override
     public boolean isSingleton() {
         return true;
     }
 }
-
