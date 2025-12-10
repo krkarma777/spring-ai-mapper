@@ -5,32 +5,20 @@ import com.krkarma777.springaimapper.annotation.Param;
 import com.krkarma777.springaimapper.annotation.SystemMessage;
 import com.krkarma777.springaimapper.annotation.UserMessage;
 
-/**
- * LLM 클라이언트 사용 예제 인터페이스.
- * @LlmClient, @SystemMessage, @UserMessage, @Param 어노테이션의 사용법을 보여줍니다.
- */
-@LlmClient(model = "gpt-3.5-turbo")
-@SystemMessage("You are a friendly assistant that greets people warmly.")
+@LlmClient(model = "gpt-4o-mini") // 가성비 좋은 모델로 변경
+@SystemMessage("You are a helpful database assistant. You strictly answer in JSON format when requested.")
 public interface GreetingService {
 
-    /**
-     * 간단한 인사 메시지를 생성합니다.
-     * @Param 어노테이션을 사용하여 파라미터 이름을 명시적으로 지정합니다.
-     */
-    @UserMessage("Hello, {name}! How are you today?")
+    // 1. 기본 String 반환 테스트
+    @UserMessage("Say hello to {name} strictly in Korean.")
     String greet(@Param("name") String name);
 
-    /**
-     * 여러 파라미터를 사용하는 예제.
-     * 파라미터 이름이 컴파일 시 보존되는 경우 @Param을 생략할 수 있습니다.
-     */
-    @UserMessage("Hello, {name}! You are {age} years old and from {city}.")
-    String greetWithDetails(String name, int age, String city);
-
-    /**
-     * @Param을 사용하여 파라미터 이름을 명시적으로 지정하는 예제.
-     */
-    @UserMessage("Create a personalized greeting for {personName} who is {personAge} years old.")
-    String personalizedGreeting(@Param("personName") String name, @Param("personAge") int age);
+    // 2. [핵심] 객체(Record) 자동 매핑 테스트
+    // 라이브러리가 자동으로 "JSON 포맷 지시문"을 프롬프트 뒤에 붙여줄 것임.
+    @UserMessage("Extract information about the movie actor '{actorName}'.")
+    ActorInfo getActorInfo(@Param("actorName") String actorName);
 }
+
+// 테스트용 DTO (Record)
+record ActorInfo(String name, String mostFamousMovie, int age) {}
 
