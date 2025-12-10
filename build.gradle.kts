@@ -31,8 +31,7 @@ repositories {
 
 dependencyManagement {
     imports {
-        // [핵심 수정] 1.1.2는 아직 정식 배포 전일 수 있음 -> 최신 안정 버전 1.1.1로 변경
-        mavenBom("org.springframework.ai:spring-ai-bom:1.1.1")
+        mavenBom("org.springframework.ai:spring-ai-bom:1.1.2")
     }
 }
 
