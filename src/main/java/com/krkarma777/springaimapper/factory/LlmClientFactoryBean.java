@@ -3,6 +3,7 @@ package com.krkarma777.springaimapper.factory;
 import com.krkarma777.springaimapper.proxy.LlmClientInvocationHandler;
 import org.springframework.ai.chat.ChatClient;
 import org.springframework.beans.factory.FactoryBean;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.lang.reflect.Proxy;
 
@@ -13,11 +14,12 @@ import java.lang.reflect.Proxy;
 public class LlmClientFactoryBean<T> implements FactoryBean<T> {
 
     private final Class<T> interfaceType;
-    private final ChatClient chatClient;
+    
+    @Autowired
+    private ChatClient chatClient;
 
-    public LlmClientFactoryBean(Class<T> interfaceType, ChatClient chatClient) {
+    public LlmClientFactoryBean(Class<T> interfaceType) {
         this.interfaceType = interfaceType;
-        this.chatClient = chatClient;
     }
 
     @Override

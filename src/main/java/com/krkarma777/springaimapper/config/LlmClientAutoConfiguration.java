@@ -2,18 +2,26 @@ package com.krkarma777.springaimapper.config;
 
 import com.krkarma777.springaimapper.annotation.LlmClient;
 import com.krkarma777.springaimapper.factory.LlmClientFactoryBean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.ChatClient;
+import org.springframework.beans.factory.BeanClassLoaderAware;
+import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.config.BeanDefinition;
-import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.beans.factory.support.BeanDefinitionBuilder;
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
-import org.springframework.beans.factory.support.BeanDefinitionRegistryPostProcessor;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.AutoConfigurationPackages;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
-import org.springframework.context.ApplicationContext;
-import org.springframework.context.ApplicationContextAware;
-import org.springframework.util.StringUtils;
+import org.springframework.context.EnvironmentAware;
+import org.springframework.context.ResourceLoaderAware;
+import org.springframework.context.annotation.ImportBeanDefinitionRegistrar;
+import org.springframework.core.env.Environment;
+import org.springframework.core.io.ResourceLoader;
+import org.springframework.core.type.AnnotationMetadata;
+import org.springframework.util.ClassUtils;
 
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -22,110 +30,84 @@ import java.util.Set;
  */
 @AutoConfiguration
 @ConditionalOnClass(ChatClient.class)
-public class LlmClientAutoConfiguration {
+public class LlmClientAutoConfiguration implements ImportBeanDefinitionRegistrar, ResourceLoaderAware, EnvironmentAware, BeanClassLoaderAware {
 
-    @ConditionalOnClass(ChatClient.class)
-    @org.springframework.context.annotation.Bean
-    public static LlmClientBeanDefinitionRegistryPostProcessor llmClientBeanDefinitionRegistryPostProcessor() {
-        return new LlmClientBeanDefinitionRegistryPostProcessor();
+    private static final Logger logger = LoggerFactory.getLogger(LlmClientAutoConfiguration.class);
+    
+    private ResourceLoader resourceLoader;
+    private Environment environment;
+    private ClassLoader classLoader;
+
+    @Override
+    public void setResourceLoader(ResourceLoader resourceLoader) {
+        this.resourceLoader = resourceLoader;
     }
 
-    /**
-     * BeanDefinitionRegistryPostProcessor를 사용하여 @LlmClient 인터페이스를 스캔하고 등록합니다.
-     */
-    static class LlmClientBeanDefinitionRegistryPostProcessor 
-            implements BeanDefinitionRegistryPostProcessor, ApplicationContextAware {
+    @Override
+    public void setEnvironment(Environment environment) {
+        this.environment = environment;
+    }
+    
+    @Override
+    public void setBeanClassLoader(ClassLoader classLoader) {
+        this.classLoader = classLoader;
+    }
 
-        private ApplicationContext applicationContext;
+    @Override
+    public void registerBeanDefinitions(AnnotationMetadata importingClassMetadata, BeanDefinitionRegistry registry) {
+        // 1. 스캐너 초기화 (인터페이스 스캔 가능하도록 오버라이딩된 녀석)
+        LlmClientComponentProvider scanner = new LlmClientComponentProvider(environment);
+        scanner.setResourceLoader(resourceLoader);
 
-        @Override
-        public void setApplicationContext(ApplicationContext applicationContext) {
-            this.applicationContext = applicationContext;
+        // 2. 사용자의 메인 패키지 위치 자동 감지 (여기가 핵심)
+        // AutoConfigurationPackages.get(registry)는 @SpringBootApplication이 있는 패키지 목록을 가져온다.
+        // BeanDefinitionRegistry는 BeanFactory를 상속받으므로 캐스팅 가능
+        List<String> packages = AutoConfigurationPackages.get((BeanFactory) registry);
+        
+        if (packages.isEmpty()) {
+            logger.warn("Could not determine auto-configuration package, scanning default package 'com.krkarma777' is risky.");
         }
 
-        @Override
-        public void postProcessBeanDefinitionRegistry(BeanDefinitionRegistry registry) {
-            // ChatClient Bean이 없으면 등록하지 않음
-            if (!hasChatClient(registry)) {
-                return;
-            }
-
-            // LlmClientComponentProvider를 사용하여 인터페이스 스캔
-            LlmClientComponentProvider scanner = new LlmClientComponentProvider();
+        for (String basePackage : packages) {
+            logger.debug("Scanning for @LlmClient interfaces in package: {}", basePackage);
             
-            // 기본 패키지 스캔 (전체 클래스패스 스캔은 비효율적이므로 기본 패키지만)
-            String basePackage = "com.krkarma777";
             Set<BeanDefinition> candidateComponents = scanner.findCandidateComponents(basePackage);
-            
-            // 각 인터페이스에 대해 FactoryBean 등록
+
             for (BeanDefinition beanDefinition : candidateComponents) {
                 String className = beanDefinition.getBeanClassName();
-                if (className != null) {
-                    try {
-                        Class<?> clazz = Class.forName(className);
-                        if (clazz.isInterface() && clazz.isAnnotationPresent(LlmClient.class)) {
-                            registerLlmClientBean(registry, clazz);
-                        }
-                    } catch (ClassNotFoundException e) {
-                        // 클래스를 찾을 수 없는 경우 무시
-                    }
-                }
+                registerLlmClientBean(registry, className);
             }
         }
+    }
 
-        @Override
-        public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) {
-            // BeanFactory 후처리는 필요 없음
-        }
-
-        /**
-         * ChatClient Bean이 존재하는지 확인합니다.
-         */
-        private boolean hasChatClient(BeanDefinitionRegistry registry) {
-            // registry에서 직접 확인
-            String[] beanNames = registry.getBeanDefinitionNames();
-            for (String beanName : beanNames) {
-                BeanDefinition bd = registry.getBeanDefinition(beanName);
-                if (bd.getBeanClassName() != null && 
-                    bd.getBeanClassName().contains("ChatClient")) {
-                    return true;
-                }
-            }
+    private void registerLlmClientBean(BeanDefinitionRegistry registry, String className) {
+        try {
+            Class<?> interfaceClass = ClassUtils.forName(className, classLoader);
             
-            // ApplicationContext에서 확인
-            if (applicationContext != null) {
-                try {
-                    return applicationContext.getBean(ChatClient.class) != null;
-                } catch (Exception e) {
-                    // Bean이 없으면 false
-                    return false;
-                }
-            }
-            
-            return false;
-        }
-
-        /**
-         * @LlmClient 어노테이션이 붙은 인터페이스에 대한 FactoryBean을 등록합니다.
-         */
-        private void registerLlmClientBean(BeanDefinitionRegistry registry, Class<?> interfaceClass) {
-            String beanName = generateBeanName(interfaceClass);
-            
+            // FactoryBean 정의 생성
             BeanDefinitionBuilder builder = BeanDefinitionBuilder
-                .genericBeanDefinition(LlmClientFactoryBean.class)
-                .addConstructorArgValue(interfaceClass)
-                .addConstructorArgReference("chatClient");
+                    .genericBeanDefinition(LlmClientFactoryBean.class);
             
+            // 생성자 인자: 인터페이스 타입
+            builder.addConstructorArgValue(interfaceClass);
+            
+            // 중요: ChatClient는 이름으로 참조하지 않고, FactoryBean 내부에서 @Autowired로 주입받게 함.
+            // (setAutowireMode는 Deprecated 되었지만 FactoryBean 구현체 내부에서 필드 주입이나 생성자 주입을 유도해야 함)
+            // 여기서는 FactoryBean 정의 자체를 등록하므로, FactoryBean이 빈으로 생성될 때 스프링이 알아서 의존성을 주입해줌.
+            
+            // 빈 등록
+            String beanName = generateBeanName(interfaceClass);
             registry.registerBeanDefinition(beanName, builder.getBeanDefinition());
-        }
+            
+            logger.info("Registered LlmClient bean: {} for interface: {}", beanName, className);
 
-        /**
-         * 인터페이스 클래스로부터 Bean 이름을 생성합니다.
-         */
-        private String generateBeanName(Class<?> interfaceClass) {
-            String simpleName = interfaceClass.getSimpleName();
-            // 첫 글자를 소문자로 변환
-            return Character.toLowerCase(simpleName.charAt(0)) + simpleName.substring(1);
+        } catch (ClassNotFoundException e) {
+            logger.error("Failed to load class for LlmClient: {}", className, e);
         }
+    }
+
+    private String generateBeanName(Class<?> interfaceClass) {
+        String simpleName = interfaceClass.getSimpleName();
+        return Character.toLowerCase(simpleName.charAt(0)) + simpleName.substring(1);
     }
 }

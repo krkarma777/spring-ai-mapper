@@ -2,6 +2,7 @@ package com.krkarma777.springaimapper.config;
 
 import org.springframework.beans.factory.annotation.AnnotatedBeanDefinition;
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
+import org.springframework.core.env.Environment;
 import org.springframework.core.type.AnnotationMetadata;
 import org.springframework.core.type.filter.AnnotationTypeFilter;
 
@@ -16,6 +17,11 @@ public class LlmClientComponentProvider extends ClassPathScanningCandidateCompon
 
     public LlmClientComponentProvider() {
         super(false);
+        addIncludeFilter(new AnnotationTypeFilter(LlmClient.class));
+    }
+
+    public LlmClientComponentProvider(Environment environment) {
+        super(false, environment);
         addIncludeFilter(new AnnotationTypeFilter(LlmClient.class));
     }
 
