@@ -10,8 +10,6 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.converter.BeanOutputConverter;
-import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.util.StringUtils;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
@@ -90,16 +88,8 @@ public class LlmClientInvocationHandler implements InvocationHandler {
         Prompt prompt = createPrompt(promptTemplate, variables, formatInstruction);
 
         // Execute LLM call using Fluent API
-        ChatClient.ChatClientRequestSpec requestSpec = chatClient.prompt(prompt);
-        
-        // Apply model-specific options if model name is specified
-        if (StringUtils.hasText(this.modelName)) {
-            requestSpec.options(OpenAiChatOptions.builder()
-                    .model(this.modelName)
-                    .build());
-        }
-
-        String responseContent = requestSpec.call().content();
+        // Model is already configured in ChatClient.Builder via defaultOptions
+        String responseContent = chatClient.prompt(prompt).call().content();
 
         return convertResponse(responseContent, returnType, converter);
     }

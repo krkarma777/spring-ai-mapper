@@ -3,8 +3,10 @@ package com.krkarma777.springaimapper.factory;
 import com.krkarma777.springaimapper.annotation.LlmClient;
 import com.krkarma777.springaimapper.proxy.LlmClientInvocationHandler;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.FactoryBean;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.util.StringUtils;
 
 import java.lang.reflect.Proxy;
 
@@ -44,7 +46,17 @@ public class LlmClientFactoryBean<T> implements FactoryBean<T> {
         LlmClient annotation = interfaceType.getAnnotation(LlmClient.class);
         String modelName = (annotation != null) ? annotation.model() : "";
         
-        ChatClient chatClient = chatClientBuilder.build();
+        // Build ChatClient with model-specific options if model name is specified
+        ChatClient.Builder builder = chatClientBuilder;
+        if (StringUtils.hasText(modelName)) {
+            builder = builder.defaultOptions(
+                OpenAiChatOptions.builder()
+                    .withModel(modelName)
+                    .build()
+            );
+        }
+        
+        ChatClient chatClient = builder.build();
         
         return (T) Proxy.newProxyInstance(
             interfaceType.getClassLoader(),
